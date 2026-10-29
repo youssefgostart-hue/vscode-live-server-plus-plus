@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0f766e">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="المبيعات">
+  <title>برنامج المبيعات</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icon.svg">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar" id="nav">
+      <div class="brand">
+        <img src="icon.svg" alt="" width="36" height="36">
+        <span id="brand-name">برنامج المبيعات</span>
+      </div>
+      <nav>
+        <a href="#/dashboard" data-route="dashboard"><span class="ic">🏠</span><span>الرئيسية</span></a>
+        <a href="#/pos" data-route="pos"><span class="ic">🛒</span><span>بيع</span></a>
+        <a href="#/invoices" data-route="invoices"><span class="ic">🧾</span><span>الفواتير</span></a>
+        <a href="#/products" data-route="products"><span class="ic">📦</span><span>الأصناف</span></a>
+        <a href="#/customers" data-route="customers"><span class="ic">👥</span><span>العملاء</span></a>
+        <a href="#/expenses" data-route="expenses"><span class="ic">💸</span><span>المصروفات</span></a>
+        <a href="#/reports" data-route="reports"><span class="ic">📊</span><span>التقارير</span></a>
+        <a href="#/settings" data-route="settings"><span class="ic">⚙️</span><span>الإعدادات</span></a>
+      </nav>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <h1 id="page-title">الرئيسية</h1>
+        <span class="today" id="today"></span>
+      </header>
+      <section id="view" class="view"></section>
+    </main>
+
+    <nav class="bottom-nav" id="bottom-nav">
+      <a href="#/dashboard" data-route="dashboard"><span class="ic">🏠</span><span>الرئيسية</span></a>
+      <a href="#/pos" data-route="pos"><span class="ic">🛒</span><span>بيع</span></a>
+      <a href="#/invoices" data-route="invoices"><span class="ic">🧾</span><span>الفواتير</span></a>
+      <a href="#/products" data-route="products"><span class="ic">📦</span><span>الأصناف</span></a>
+      <button type="button" id="more-btn"><span class="ic">☰</span><span>المزيد</span></button>
+    </nav>
+  </div>
+
+  <div class="sheet-backdrop" id="more-sheet" hidden>
+    <div class="sheet">
+      <a href="#/customers"><span class="ic">👥</span>العملاء</a>
+      <a href="#/expenses"><span class="ic">💸</span>المصروفات</a>
+      <a href="#/reports"><span class="ic">📊</span>التقارير</a>
+      <a href="#/settings"><span class="ic">⚙️</span>الإعدادات</a>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" id="modal" hidden>
+    <div class="modal" role="dialog" aria-modal="true">
+      <div class="modal-head">
+        <h2 id="modal-title"></h2>
+        <button type="button" class="icon-btn" data-close aria-label="إغلاق">✕</button>
+      </div>
+      <div class="modal-body" id="modal-body"></div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <div id="print-area"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
