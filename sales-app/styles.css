@@ -36,6 +36,7 @@
     --ok: #4ade80;
     --ok-soft: #14321f;
     --shadow: none;
+    color-scheme: dark;
   }
 }
 :root[data-theme="dark"] {
@@ -54,6 +55,7 @@
   --ok: #4ade80;
   --ok-soft: #14321f;
   --shadow: none;
+  color-scheme: dark;
 }
 
 * { box-sizing: border-box; }
@@ -98,7 +100,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
   padding: 14px 20px;
   background: var(--surface);
   border-bottom: 1px solid var(--border);
-  position: sticky; top: 0; z-index: 5;
+  position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5;
 }
 .topbar h1 { margin: 0; font-size: 19px; }
 .today { color: var(--muted); font-size: 13px; }

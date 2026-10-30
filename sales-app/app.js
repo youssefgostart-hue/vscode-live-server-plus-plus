@@ -4,6 +4,8 @@
   'use strict';
 
   const STORAGE_KEY = 'salesApp.v1';
+  // Set by the hosted single-file build, where printing, downloads and service workers are unavailable.
+  const EMBED = !!window.SALES_EMBED;
 
   /* =========================================================
    * Data layer
@@ -186,7 +188,7 @@
     customers: { title: 'العملاء', render: renderCustomers },
     expenses: { title: 'المصروفات', render: renderExpenses },
     reports: { title: 'التقارير', render: renderReports },
-    settings: { title: 'الإعدادات', render: renderSettings }
+    options: { title: 'الإعدادات', render: renderSettings }
   };
 
   function currentRoute() {
@@ -200,7 +202,7 @@
     $('#page-title').textContent = route.title;
     document.title = `${route.title} — ${db.settings.storeName || 'برنامج المبيعات'}`;
     $$('[data-route]').forEach(a => a.classList.toggle('active', a.dataset.route === name));
-    const isMore = ['customers', 'expenses', 'reports', 'settings'].includes(name);
+    const isMore = ['customers', 'expenses', 'reports', 'options'].includes(name);
     $('#more-btn').style.color = isMore ? 'var(--primary)' : '';
     $('#more-sheet').hidden = true;
     route.render($('#view'));
@@ -225,7 +227,7 @@
         <h3>👋 أهلًا بيك!</h3>
         <p class="muted" style="margin-top:0">ابدأ بإضافة أصنافك، أو جرّب البرنامج ببيانات تجريبية.</p>
         <div class="toolbar" style="margin:0">
-          <a class="btn primary" href="#/products">إضافة أصناف</a>
+          <a class="btn primary" href="#products">إضافة أصناف</a>
           <button class="btn" id="seed-demo">تحميل بيانات تجريبية</button>
         </div>
       </div>` : '';
@@ -241,7 +243,7 @@
       </div>
 
       <div class="toolbar">
-        <a class="btn primary lg grow" href="#/pos">🛒 فاتورة بيع جديدة</a>
+        <a class="btn primary lg grow" href="#pos">🛒 فاتورة بيع جديدة</a>
       </div>
 
       <div class="two-col">
@@ -380,7 +382,7 @@
     const el = $('#pos-products');
     if (!el) return;
     if (!db.products.length) {
-      el.outerHTML = `<div id="pos-products">${emptyState('📦', 'لا توجد أصناف بعد', '<a class="btn primary" href="#/products">أضف أول صنف</a>')}</div>`;
+      el.outerHTML = `<div id="pos-products">${emptyState('📦', 'لا توجد أصناف بعد', '<a class="btn primary" href="#products">أضف أول صنف</a>')}</div>`;
       return;
     }
     const list = filteredProducts();
@@ -626,14 +628,14 @@
           <option value="due" ${invFilter.status === 'due' ? 'selected' : ''}>عليها متبقي</option>
           <option value="returned" ${invFilter.status === 'returned' ? 'selected' : ''}>مرتجع</option>
         </select>
-        <button class="btn" id="inv-csv">⬇ Excel</button>
+        ${EMBED ? '' : '<button class="btn" id="inv-csv">⬇ Excel</button>'}
       </div>
       <div id="inv-summary" class="muted" style="margin-bottom:10px"></div>
       <div class="card"><div class="table-wrap" id="inv-list"></div></div>`;
 
     const bind = (id, key, ev = 'input') => $(id, view).addEventListener(ev, e => { invFilter[key] = e.target.value; drawInvoices(); });
     bind('#inv-q', 'q'); bind('#inv-from', 'from', 'change'); bind('#inv-to', 'to', 'change'); bind('#inv-status', 'status', 'change');
-    $('#inv-csv', view).onclick = () => exportInvoicesCSV(filteredInvoices());
+    if (!EMBED) $('#inv-csv', view).onclick = () => exportInvoicesCSV(filteredInvoices());
     drawInvoices();
   }
 
@@ -700,10 +702,11 @@
       ${inv.status === 'returned' ? `<p><span class="badge muted">تم الإرجاع ${inv.returnedAt ? fmtDateTime(inv.returnedAt) : ''}</span></p>` : ''}
       <div class="form-actions">
         ${inv.status !== 'returned' ? '<button class="btn danger" id="inv-return">↩ مرتجع</button>' : ''}
-        <button class="btn" id="inv-share">مشاركة</button>
-        <button class="btn primary" id="inv-print">🖨 طباعة</button>
+        <button class="btn ${EMBED ? 'primary' : ''}" id="inv-share">${EMBED ? 'نسخ الفاتورة' : 'مشاركة'}</button>
+        ${EMBED ? '' : '<button class="btn primary" id="inv-print">🖨 طباعة</button>'}
       </div>`, body => {
-      $('#inv-print', body).onclick = () => printInvoice(inv);
+      const printBtn = $('#inv-print', body);
+      if (printBtn) printBtn.onclick = () => printInvoice(inv);
       $('#inv-share', body).onclick = () => shareInvoice(inv);
       const ret = $('#inv-return', body);
       if (ret) ret.onclick = () => confirmBox(`إرجاع الفاتورة #${inv.no} بالكامل؟ سيتم إرجاع الكميات للمخزون${due > 0 ? ' وخصم المتبقي من حساب العميل' : ''}.`, () => {
@@ -744,6 +747,7 @@
 
   async function shareInvoice(inv) {
     const text = invoiceText(inv);
+    if (EMBED) { copyText(text, 'تم نسخ الفاتورة — الصقها في واتساب', 'نص الفاتورة'); return; }
     try {
       if (navigator.share) { await navigator.share({ title: `فاتورة #${inv.no}`, text }); return; }
       await navigator.clipboard.writeText(text);
@@ -752,6 +756,16 @@
       if (e && e.name !== 'AbortError') {
         window.open('https://wa.me/?text=' + encodeURIComponent(text), '_blank');
       }
+    }
+  }
+
+  async function copyText(text, okMsg, title) {
+    try {
+      await navigator.clipboard.writeText(text);
+      toast(okMsg);
+    } catch (e) {
+      modal.open(title, `<p class="muted" style="margin-top:0">انسخ النص يدويًا:</p><textarea class="input" id="copy-text" style="min-height:220px" readonly>${esc(text)}</textarea>`,
+        body => { const t = $('#copy-text', body); t.focus(); t.select(); });
     }
   }
 
@@ -836,7 +850,7 @@
           ${cats.map(c => `<option ${prodFilter.category === c ? 'selected' : ''}>${esc(c)}</option>`).join('')}
         </select>
         <label class="btn"><input type="checkbox" id="p-low" ${prodFilter.low ? 'checked' : ''}> الناقص فقط</label>
-        <button class="btn" id="p-csv">⬇ Excel</button>
+        ${EMBED ? '' : '<button class="btn" id="p-csv">⬇ Excel</button>'}
         <button class="btn primary" id="p-add">+ صنف جديد</button>
       </div>
       <div class="card"><div class="table-wrap" id="p-list"></div></div>`;
@@ -845,7 +859,7 @@
     $('#p-cat', view).onchange = e => { prodFilter.category = e.target.value; drawProductsTable(); };
     $('#p-low', view).onchange = e => { prodFilter.low = e.target.checked; drawProductsTable(); };
     $('#p-add', view).onclick = () => editProduct(null);
-    $('#p-csv', view).onclick = () => csvDownload(`products-${todayKey()}.csv`, [
+    if (!EMBED) $('#p-csv', view).onclick = () => csvDownload(`products-${todayKey()}.csv`, [
       ['الاسم', 'الباركود', 'القسم', 'سعر الشراء', 'سعر البيع', 'المخزون', 'حد الطلب'],
       ...db.products.map(p => [p.name, p.barcode, p.category, p.cost, p.price, p.trackStock === false ? '' : p.stock, p.minStock])
     ]);
@@ -1347,7 +1361,7 @@
         <h3>النسخ الاحتياطي</h3>
         <p class="muted" style="margin-top:0">البيانات محفوظة على هذا الجهاز فقط. خذ نسخة احتياطية باستمرار وانقلها لأي جهاز آخر.</p>
         <div class="toolbar" style="margin:0">
-          <button class="btn primary" id="backup">⬇ تنزيل نسخة احتياطية</button>
+          <button class="btn primary" id="backup">${EMBED ? 'نسخ النسخة الاحتياطية' : '⬇ تنزيل نسخة احتياطية'}</button>
           <label class="btn">⬆ استرجاع نسخة<input type="file" id="restore" accept=".json,application/json" hidden></label>
         </div>
         <p class="muted" style="font-size:13px">آخر نسخة: ${s.lastBackup ? fmtDateTime(s.lastBackup) : 'لم يتم بعد'}</p>
@@ -1375,7 +1389,13 @@
     $('#backup', view).onclick = () => {
       db.settings.lastBackup = new Date().toISOString();
       save();
-      downloadBlob(new Blob([JSON.stringify(db, null, 2)], { type: 'application/json' }), `sales-backup-${todayKey()}.json`);
+      const json = JSON.stringify(db, null, 2);
+      if (EMBED) {
+        render();
+        copyText(json, 'تم نسخ النسخة الاحتياطية — احفظها في ملف .json', 'النسخة الاحتياطية');
+        return;
+      }
+      downloadBlob(new Blob([json], { type: 'application/json' }), `sales-backup-${todayKey()}.json`);
       render();
     };
 
@@ -1405,7 +1425,7 @@
     }, 'تحميل', false);
 
     $('#wipe', view).onclick = () => confirmBox('<b>سيتم حذف كل البيانات نهائيًا!</b> يُفضل أخذ نسخة احتياطية أولًا.', () => {
-      db = defaultDB(); save(); resetPOS(); applyTheme(); applyBrand(); location.hash = '#/dashboard'; render(); toast('تم مسح البيانات');
+      db = defaultDB(); save(); resetPOS(); applyTheme(); applyBrand(); location.hash = '#dashboard'; render(); toast('تم مسح البيانات');
     }, 'مسح الكل');
   }
 
@@ -1471,12 +1491,16 @@
   }
 
   $('#today').textContent = new Date().toLocaleDateString('ar-EG', { weekday: 'long', day: 'numeric', month: 'long' });
+  let firstVisit = false;
+  try { firstVisit = !localStorage.getItem(STORAGE_KEY); } catch (e) { firstVisit = true; }
+  if (EMBED && firstVisit && !db.products.length) seedDemo();
   applyTheme();
   applyBrand();
   render();
+  if (EMBED && firstVisit) toast('تم تحميل بيانات تجريبية — امسحها من الإعدادات');
 
   // Offline support when served over http(s) (service workers don't run on file://)
-  if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+  if (!EMBED && 'serviceWorker' in navigator && location.protocol.startsWith('http')) {
     navigator.serviceWorker.register('sw.js').catch(() => {});
   }
 })();
