@@ -10,7 +10,7 @@
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="icon.svg">
-  <link rel="stylesheet" href="styles.css?v=4">
+  <link rel="stylesheet" href="styles.css?v=5">
 </head>
 <body>
   <div class="app">
@@ -76,9 +76,22 @@
     </div>
   </div>
 
+  <div class="login" id="login" hidden>
+    <form class="login-card" id="login-form" autocomplete="on">
+      <img src="icon.svg" alt="" width="56" height="56">
+      <h1 id="login-store">برنامج المبيعات</h1>
+      <p class="muted">سجّل الدخول عشان تكمل</p>
+      <div class="field"><label for="login-user">اسم المستخدم</label><input class="input" id="login-user" name="user" autocomplete="username" autocapitalize="off" required></div>
+      <div class="field"><label for="login-pass">كلمة المرور</label><input class="input" id="login-pass" name="pass" type="password" autocomplete="current-password" required></div>
+      <p class="login-error" id="login-error" hidden>اسم المستخدم أو كلمة المرور غلط</p>
+      <button class="btn primary lg block">دخول</button>
+      <span class="credit-tag">Powered by Youssef Ibrahim</span>
+    </form>
+  </div>
+
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
   <div id="print-area"></div>
 
-  <script src="app.js?v=4"></script>
+  <script src="app.js?v=5"></script>
 </body>
 </html>

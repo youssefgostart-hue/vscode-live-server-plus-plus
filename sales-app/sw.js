@@ -1,6 +1,6 @@
 // Service worker: caches the app shell so it opens with no internet.
 // Bump VERSION together with the ?v= numbers in index.html on every release.
-const VERSION = '4';
+const VERSION = '5';
 const CACHE = 'sales-app-v' + VERSION;
 const ASSETS = ['./', './index.html', './styles.css?v=' + VERSION, './app.js?v=' + VERSION, './manifest.webmanifest', './icon.svg'];
 
