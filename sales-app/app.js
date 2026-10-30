@@ -6,6 +6,7 @@
   const STORAGE_KEY = 'salesApp.v1';
   // Set by the hosted single-file build, where printing, downloads and service workers are unavailable.
   const EMBED = !!window.SALES_EMBED;
+  const CREDIT = 'Powered by Youssef Ibrahim';
 
   /* =========================================================
    * Data layer
@@ -740,7 +741,8 @@
       inv.tax ? `الضريبة: ${fmt(inv.tax)}` : '',
       `الإجمالي: ${fmt(inv.total)} ${s.currency}`,
       round2(inv.total - inv.paid) > 0 ? `المتبقي: ${fmt(inv.total - inv.paid)} ${s.currency}` : '',
-      s.footer
+      s.footer,
+      CREDIT
     ];
     return lines.filter(Boolean).join('\n');
   }
@@ -800,6 +802,7 @@
         ${inv.status === 'returned' ? '<hr><div class="c big">*** مرتجع ***</div>' : ''}
         <hr>
         <div class="c">${esc(s.footer)}</div>
+        <div class="c" style="font-size:10px;margin-top:4px">${CREDIT}</div>
       </div>`;
     window.print();
   }
@@ -1373,7 +1376,8 @@
           <button class="btn" id="demo">تحميل بيانات تجريبية</button>
           <button class="btn danger" id="wipe">مسح كل البيانات</button>
         </div>
-      </div>`;
+      </div>
+      <p class="credit">${CREDIT}</p>`;
 
     $('#set-form', view).onsubmit = e => {
       e.preventDefault();
