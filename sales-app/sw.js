@@ -1,6 +1,8 @@
 // Service worker: caches the app shell so it opens with no internet.
-const CACHE = 'sales-app-v3';
-const ASSETS = ['./', './index.html', './styles.css', './app.js', './manifest.webmanifest', './icon.svg'];
+// Bump VERSION together with the ?v= numbers in index.html on every release.
+const VERSION = '4';
+const CACHE = 'sales-app-v' + VERSION;
+const ASSETS = ['./', './index.html', './styles.css?v=' + VERSION, './app.js?v=' + VERSION, './manifest.webmanifest', './icon.svg'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)).then(() => self.skipWaiting()));
@@ -18,7 +20,8 @@ self.addEventListener('activate', e => {
 self.addEventListener('fetch', e => {
   if (e.request.method !== 'GET' || new URL(e.request.url).origin !== location.origin) return;
   e.respondWith(
-    fetch(e.request)
+    // no-cache: always revalidate with the server so a new release is never mixed with old files
+    fetch(e.request, { cache: 'no-cache' })
       .then(res => {
         const copy = res.clone();
         caches.open(CACHE).then(c => c.put(e.request, copy));
