@@ -27,7 +27,11 @@
     invoices: [],
     expenses: [],
     payments: [],
-    counters: { invoice: 1 }
+    suppliers: [],
+    purchases: [],
+    supplierPayments: [],
+    movements: [],
+    counters: { invoice: 1, purchase: 1 }
   });
 
   let db = load();
@@ -38,7 +42,10 @@
       if (!raw) return defaultDB();
       const parsed = JSON.parse(raw);
       const base = defaultDB();
-      return Object.assign(base, parsed, { settings: Object.assign(base.settings, parsed.settings || {}) });
+      return Object.assign(base, parsed, {
+        settings: Object.assign(base.settings, parsed.settings || {}),
+        counters: Object.assign(base.counters, parsed.counters || {})
+      });
     } catch (e) {
       console.error(e);
       return defaultDB();
@@ -167,7 +174,9 @@
     const tax = invs.reduce((s, i) => s + i.tax, 0);
     const expenses = db.expenses.filter(e => inRange(e.date, from, to)).reduce((s, e) => s + e.amount, 0);
     const gross = net - cost;
-    return { invs, count: invs.length, sales, net, cost, tax, gross, expenses, profit: gross - expenses };
+    const purs = db.purchases.filter(p => p.status !== 'returned' && inRange(p.date, from, to));
+    const purchases = purs.reduce((s, p) => s + p.total, 0);
+    return { invs, count: invs.length, sales, net, cost, tax, gross, expenses, profit: gross - expenses, purchases, purchaseCount: purs.length };
   }
 
   function lowStockProducts() {
@@ -185,7 +194,10 @@
     dashboard: { title: 'الرئيسية', render: renderDashboard },
     pos: { title: 'نقطة البيع', render: renderPOS },
     invoices: { title: 'الفواتير', render: renderInvoices },
-    products: { title: 'الأصناف والمخزون', render: renderProducts },
+    products: { title: 'الأصناف', render: renderProducts },
+    inventory: { title: 'المخزون', render: renderInventory },
+    purchases: { title: 'المشتريات', render: renderPurchases },
+    suppliers: { title: 'الموردين', render: renderSuppliers },
     customers: { title: 'العملاء', render: renderCustomers },
     expenses: { title: 'المصروفات', render: renderExpenses },
     reports: { title: 'التقارير', render: renderReports },
@@ -203,7 +215,7 @@
     $('#page-title').textContent = route.title;
     document.title = `${route.title} — ${db.settings.storeName || 'برنامج المبيعات'}`;
     $$('[data-route]').forEach(a => a.classList.toggle('active', a.dataset.route === name));
-    const isMore = ['customers', 'expenses', 'reports', 'options'].includes(name);
+    const isMore = ['inventory', 'purchases', 'suppliers', 'customers', 'expenses', 'reports', 'options'].includes(name);
     $('#more-btn').style.color = isMore ? 'var(--primary)' : '';
     $('#more-sheet').hidden = true;
     route.render($('#view'));
@@ -241,6 +253,7 @@
         <div class="card stat"><div class="label">مبيعات الشهر</div><div class="value">${money(month.sales)}</div><div class="muted">${month.count} فاتورة</div></div>
         <div class="card stat ${signClass(month.profit)}"><div class="label">صافي ربح الشهر</div><div class="value">${money(month.profit)}</div></div>
         <div class="card stat danger"><div class="label">ديون العملاء</div><div class="value">${money(debts)}</div></div>
+        <div class="card stat danger"><div class="label">مستحق للموردين</div><div class="value">${money(db.suppliers.reduce((s, x) => s + Math.max(0, x.balance || 0), 0))}</div></div>
       </div>
 
       <div class="toolbar">
@@ -599,7 +612,10 @@
 
     for (const l of inv.items) {
       const p = byId(db.products, l.productId);
-      if (p && p.trackStock !== false) p.stock = round2(p.stock - l.qty);
+      if (p && p.trackStock !== false) {
+        p.stock = round2(p.stock - l.qty);
+        logMove(p, -l.qty, 'sale', 'فاتورة #' + inv.no);
+      }
     }
     if (customer && due > 0) customer.balance = round2((customer.balance || 0) + due);
 
@@ -721,7 +737,10 @@
   function returnInvoice(inv) {
     for (const it of inv.items) {
       const p = byId(db.products, it.productId);
-      if (p && p.trackStock !== false) p.stock = round2(p.stock + it.qty);
+      if (p && p.trackStock !== false) {
+        p.stock = round2(p.stock + it.qty);
+        logMove(p, it.qty, 'sale_return', 'فاتورة #' + inv.no);
+      }
     }
     const due = round2(inv.total - inv.paid);
     const c = inv.customerId && byId(db.customers, inv.customerId);
@@ -905,7 +924,7 @@
     $$('[data-stock]', el).forEach(b => b.onclick = () => adjustStock(b.dataset.stock));
   }
 
-  function editProduct(id) {
+  function editProduct(id, onSaved, hideOpening) {
     const p = id ? byId(db.products, id) : null;
     const cats = categories();
     modal.open(p ? 'تعديل صنف' : 'صنف جديد', `
@@ -926,7 +945,7 @@
           <input type="checkbox" name="service" ${p && p.trackStock === false ? 'checked' : ''}> خدمة (بدون مخزون)
         </label>
         <div class="form-row" id="stock-fields">
-          <div class="field"><label>${p ? 'الكمية الحالية' : 'الكمية الافتتاحية'}</label><input class="input" name="stock" type="number" step="any" inputmode="decimal" value="${p ? p.stock : ''}"></div>
+          <div class="field" ${hideOpening ? 'hidden' : ''}><label>${p ? 'الكمية الحالية' : 'الكمية الافتتاحية'}</label><input class="input" name="stock" type="number" step="any" inputmode="decimal" value="${p ? p.stock : ''}"></div>
           <div class="field"><label>تنبيه عند وصول الكمية إلى</label><input class="input" name="minStock" type="number" step="any" min="0" inputmode="decimal" value="${p ? p.minStock : ''}"></div>
         </div>
         <div class="form-actions">
@@ -951,9 +970,18 @@
           trackStock: !form.service.checked,
           stock: num(d.stock), minStock: num(d.minStock)
         };
-        if (p) Object.assign(p, data);
-        else db.products.push({ id: uid(), createdAt: new Date().toISOString(), ...data });
-        save(); modal.close(); render();
+        let saved = p;
+        if (p) {
+          const diff = round2(data.stock - p.stock);
+          Object.assign(p, data);
+          if (data.trackStock) logMove(p, diff, 'edit');
+        } else {
+          saved = { id: uid(), createdAt: new Date().toISOString(), ...data };
+          db.products.push(saved);
+          if (data.trackStock) logMove(saved, data.stock, 'opening');
+        }
+        save(); modal.close();
+        if (onSaved) onSaved(saved); else render();
         toast(p ? 'تم تعديل الصنف' : 'تمت إضافة الصنف');
       };
       const del = $('#p-del', body);
@@ -995,8 +1023,588 @@
           p.cost = round2((oldQty * (p.cost || 0) + q * newCost) / (oldQty + q));
         }
         p.stock = round2(p.stock + (d.type === 'in' ? q : -q));
+        logMove(p, d.type === 'in' ? q : -q, d.type === 'in' ? 'adjust_in' : 'adjust_out');
         save(); modal.close(); render();
         toast('تم تحديث المخزون');
+      };
+    });
+  }
+
+  /* =========================================================
+   * Stock movements
+   * ======================================================= */
+  const moveLabels = {
+    opening: 'رصيد افتتاحي', sale: 'بيع', sale_return: 'مرتجع بيع', purchase: 'شراء', purchase_return: 'مرتجع شراء',
+    adjust_in: 'إضافة يدوية', adjust_out: 'تالف / فاقد', edit: 'تعديل يدوي', count: 'جرد'
+  };
+
+  function logMove(product, qty, type, ref, date) {
+    if (!product || product.trackStock === false || !qty) return;
+    db.movements.push({
+      id: uid(), date: date || new Date().toISOString(), productId: product.id, name: product.name,
+      qty: round2(qty), balance: product.stock, type, ref: ref || ''
+    });
+  }
+
+  /* =========================================================
+   * Suppliers
+   * ======================================================= */
+  let supQ = '';
+
+  function renderSuppliers(view) {
+    const owed = db.suppliers.reduce((s, x) => s + Math.max(0, x.balance || 0), 0);
+    view.innerHTML = `
+      <div class="grid stats">
+        <div class="card stat"><div class="label">عدد الموردين</div><div class="value">${db.suppliers.length}</div></div>
+        <div class="card stat danger"><div class="label">مستحق للموردين</div><div class="value">${money(owed)}</div></div>
+      </div>
+      <div class="toolbar">
+        <input class="input grow" type="search" id="s-q" placeholder="🔍 الاسم أو الموبايل" value="${esc(supQ)}">
+        <button class="btn primary" id="s-add">+ مورد جديد</button>
+      </div>
+      <div class="card"><div class="table-wrap" id="s-list"></div></div>`;
+    $('#s-q', view).oninput = e => { supQ = e.target.value; drawSuppliers(); };
+    $('#s-add', view).onclick = () => editSupplier(null, () => render());
+    drawSuppliers();
+  }
+
+  function drawSuppliers() {
+    const q = supQ.trim().toLowerCase();
+    const list = db.suppliers
+      .filter(x => !q || x.name.toLowerCase().includes(q) || (x.phone || '').includes(q) || (x.company || '').toLowerCase().includes(q))
+      .sort((a, b) => (b.balance || 0) - (a.balance || 0) || a.name.localeCompare(b.name, 'ar'));
+    const el = $('#s-list');
+    if (!list.length) { el.innerHTML = emptyState('🏭', db.suppliers.length ? 'لا توجد نتائج' : 'لا يوجد موردين بعد'); return; }
+    el.innerHTML = `
+      <table class="table responsive">
+        <thead><tr><th>المورد</th><th>الموبايل</th><th>المشتريات</th><th>المستحق له</th><th></th></tr></thead>
+        <tbody>${list.map(x => {
+          const total = db.purchases.filter(p => p.supplierId === x.id && p.status !== 'returned').reduce((s, p) => s + p.total, 0);
+          return `<tr>
+            <td data-label="المورد"><b>${esc(x.name)}</b>${x.company ? `<div class="muted" style="font-size:12px">${esc(x.company)}</div>` : ''}</td>
+            <td data-label="الموبايل">${x.phone ? `<a href="tel:${esc(x.phone)}">${esc(x.phone)}</a>` : '<span class="muted">—</span>'}</td>
+            <td data-label="المشتريات" class="num">${money(total)}</td>
+            <td data-label="المستحق له">${(x.balance || 0) > 0 ? `<span class="badge danger">${money(x.balance)}</span>` : (x.balance || 0) < 0 ? `<span class="badge ok">لنا عنده ${money(-x.balance)}</span>` : '<span class="badge ok">لا يوجد</span>'}</td>
+            <td class="actions">
+              <button class="btn sm" data-statement="${x.id}">كشف حساب</button>
+              ${(x.balance || 0) > 0 ? `<button class="btn sm primary" data-pay="${x.id}">سداد</button>` : ''}
+            </td>
+          </tr>`;
+        }).join('')}
+        </tbody>
+      </table>`;
+    $$('[data-pay]', el).forEach(b => b.onclick = () => paySupplier(b.dataset.pay));
+    $$('[data-statement]', el).forEach(b => b.onclick = () => supplierStatement(b.dataset.statement));
+  }
+
+  function editSupplier(id, onSaved) {
+    const x = id ? byId(db.suppliers, id) : null;
+    modal.open(x ? 'تعديل مورد' : 'مورد جديد', `
+      <form id="sup-form" autocomplete="off">
+        <div class="form-row">
+          <div class="field"><label>اسم المورد *</label><input class="input" name="name" required value="${esc(x ? x.name : '')}"></div>
+          <div class="field"><label>الشركة</label><input class="input" name="company" value="${esc(x ? x.company : '')}"></div>
+        </div>
+        <div class="form-row">
+          <div class="field"><label>الموبايل</label><input class="input" name="phone" type="tel" inputmode="tel" value="${esc(x ? x.phone : '')}"></div>
+          <div class="field"><label>العنوان</label><input class="input" name="address" value="${esc(x ? x.address : '')}"></div>
+        </div>
+        ${x ? '' : `<div class="field"><label>رصيد سابق مستحق له (اختياري)</label><input class="input" name="balance" type="number" step="any" inputmode="decimal"></div>`}
+        <div class="form-actions">
+          ${x ? '<button type="button" class="btn danger" id="sup-del" style="margin-inline-end:auto">حذف</button>' : ''}
+          <button type="button" class="btn" data-close>إلغاء</button>
+          <button class="btn primary">حفظ</button>
+        </div>
+      </form>`, body => {
+      $('#sup-form', body).onsubmit = e => {
+        e.preventDefault();
+        const d = formData(e.target);
+        if (!d.name) return;
+        let saved;
+        if (x) { Object.assign(x, { name: d.name, company: d.company, phone: d.phone, address: d.address }); saved = x; }
+        else {
+          saved = { id: uid(), name: d.name, company: d.company, phone: d.phone, address: d.address, balance: num(d.balance), createdAt: new Date().toISOString() };
+          db.suppliers.push(saved);
+        }
+        save(); modal.close();
+        toast(x ? 'تم تعديل المورد' : 'تمت إضافة المورد');
+        if (onSaved) onSaved(saved);
+      };
+      const del = $('#sup-del', body);
+      if (del) del.onclick = () => {
+        if ((x.balance || 0) > 0) { toast('لا يمكن حذف مورد له رصيد مستحق', true); return; }
+        confirmBox(`حذف المورد "${esc(x.name)}"؟`, () => {
+          db.suppliers = db.suppliers.filter(s => s.id !== x.id);
+          save(); render(); toast('تم الحذف');
+        }, 'حذف');
+      };
+    });
+  }
+
+  function paySupplier(id) {
+    const x = byId(db.suppliers, id);
+    modal.open(`سداد إلى ${x.name}`, `
+      <p class="muted" style="margin-top:0">المستحق له: <b class="num" style="color:var(--danger)">${money(x.balance)}</b></p>
+      <form id="sp-form">
+        <div class="field"><label>المبلغ المدفوع</label><input class="input" name="amount" type="number" step="any" min="0" inputmode="decimal" required value="${x.balance}"></div>
+        <div class="field"><label>ملاحظة</label><input class="input" name="note"></div>
+        <div class="form-actions">
+          <button type="button" class="btn" data-close>إلغاء</button>
+          <button class="btn primary">سداد</button>
+        </div>
+      </form>`, body => {
+      $('#sp-form', body).onsubmit = e => {
+        e.preventDefault();
+        const d = formData(e.target);
+        const amount = round2(num(d.amount));
+        if (amount <= 0) return;
+        x.balance = round2((x.balance || 0) - amount);
+        db.supplierPayments.push({ id: uid(), supplierId: x.id, amount, note: d.note, date: new Date().toISOString() });
+        save(); modal.close(); render();
+        toast(`تم سداد ${fmt(amount)}`);
+      };
+    });
+  }
+
+  function supplierStatement(id) {
+    const x = byId(db.suppliers, id);
+    const rows = [
+      ...db.purchases.filter(p => p.supplierId === x.id).map(p => ({
+        date: p.date, text: `فاتورة شراء #${p.no}${p.ref ? ' (' + p.ref + ')' : ''}${p.status === 'returned' ? ' — مرتجع' : ''}`,
+        amount: p.total, paid: p.paid, returned: p.status === 'returned'
+      })),
+      ...db.supplierPayments.filter(p => p.supplierId === x.id).map(p => ({ date: p.date, text: 'سداد' + (p.note ? ' — ' + p.note : ''), amount: 0, paid: p.amount }))
+    ].sort((a, b) => b.date.localeCompare(a.date));
+    modal.open(`كشف حساب: ${x.name}`, `
+      <div class="grid stats" style="grid-template-columns:1fr 1fr">
+        <div class="card stat"><div class="label">الموبايل</div><div class="value" style="font-size:16px">${esc(x.phone) || '—'}</div></div>
+        <div class="card stat danger"><div class="label">المستحق له</div><div class="value" style="font-size:18px">${money(x.balance || 0)}</div></div>
+      </div>
+      ${rows.length ? `<div class="table-wrap"><table class="table">
+        <thead><tr><th>التاريخ</th><th>البيان</th><th>له</th><th>مدفوع</th></tr></thead>
+        <tbody>${rows.map(r => `<tr style="${r.returned ? 'opacity:.5' : ''}"><td>${fmtDate(r.date)}</td><td>${esc(r.text)}</td><td class="num">${r.amount ? fmt(r.amount) : ''}</td><td class="num">${r.paid ? fmt(r.paid) : ''}</td></tr>`).join('')}</tbody>
+      </table></div>` : emptyState('📄', 'لا توجد حركات')}
+      <div class="form-actions">
+        <button class="btn" id="ss-edit">تعديل البيانات</button>
+        ${(x.balance || 0) > 0 ? '<button class="btn primary" id="ss-pay">سداد</button>' : ''}
+      </div>`, body => {
+      $('#ss-edit', body).onclick = () => editSupplier(x.id, () => render());
+      const pay = $('#ss-pay', body); if (pay) pay.onclick = () => paySupplier(x.id);
+    });
+  }
+
+  /* =========================================================
+   * Purchases
+   * ======================================================= */
+  const pur = { open: false, lines: [], supplierId: '', ref: '', date: '', discount: '', paid: '', note: '', q: '' };
+  const purFilter = { q: '', from: '', to: '' };
+
+  function newPurchase() {
+    Object.assign(pur, { open: true, lines: [], supplierId: '', ref: '', date: todayKey(), discount: '', paid: '', note: '', q: '' });
+    render();
+  }
+
+  function purchaseTotals() {
+    const subtotal = round2(pur.lines.reduce((s, l) => s + l.cost * l.qty, 0));
+    const discount = round2(Math.min(Math.max(num(pur.discount), 0), subtotal));
+    const total = round2(subtotal - discount);
+    const paid = pur.paid === '' ? total : round2(Math.min(Math.max(num(pur.paid), 0), total));
+    return { subtotal, discount, total, paid, due: round2(total - paid) };
+  }
+
+  function renderPurchases(view) {
+    if (pur.open) { drawPurchaseEditor(view); return; }
+    const owed = db.suppliers.reduce((s, x) => s + Math.max(0, x.balance || 0), 0);
+    const month = db.purchases.filter(p => p.status !== 'returned' && inRange(p.date, monthStartKey(), todayKey())).reduce((s, p) => s + p.total, 0);
+    view.innerHTML = `
+      <div class="grid stats">
+        <div class="card stat"><div class="label">مشتريات الشهر</div><div class="value">${money(month)}</div></div>
+        <div class="card stat danger"><div class="label">مستحق للموردين</div><div class="value">${money(owed)}</div></div>
+      </div>
+      <div class="toolbar">
+        <button class="btn primary lg grow" id="pu-new">🚚 فاتورة شراء جديدة</button>
+      </div>
+      <div class="toolbar">
+        <input class="input grow" type="search" id="pu-q" placeholder="🔍 رقم الفاتورة أو المورد" value="${esc(purFilter.q)}">
+        <input class="input" type="date" id="pu-from" value="${purFilter.from}" style="width:auto" aria-label="من">
+        <input class="input" type="date" id="pu-to" value="${purFilter.to}" style="width:auto" aria-label="إلى">
+      </div>
+      <div class="card"><div class="table-wrap" id="pu-list"></div></div>`;
+    $('#pu-new', view).onclick = newPurchase;
+    $('#pu-q', view).oninput = e => { purFilter.q = e.target.value; drawPurchaseList(); };
+    $('#pu-from', view).onchange = e => { purFilter.from = e.target.value; drawPurchaseList(); };
+    $('#pu-to', view).onchange = e => { purFilter.to = e.target.value; drawPurchaseList(); };
+    drawPurchaseList();
+  }
+
+  function drawPurchaseList() {
+    const q = purFilter.q.trim().toLowerCase().replace('#', '');
+    const list = db.purchases
+      .filter(p => (!q || String(p.no) === q || (p.supplierName || '').toLowerCase().includes(q) || (p.ref || '').toLowerCase().includes(q)) &&
+        inRange(p.date, purFilter.from, purFilter.to))
+      .sort((a, b) => b.date.localeCompare(a.date));
+    const el = $('#pu-list');
+    if (!list.length) { el.innerHTML = emptyState('🚚', db.purchases.length ? 'لا توجد نتائج' : 'لا توجد فواتير شراء بعد'); return; }
+    el.innerHTML = `
+      <table class="table responsive">
+        <thead><tr><th>رقم</th><th>التاريخ</th><th>المورد</th><th>الإجمالي</th><th>الحالة</th><th></th></tr></thead>
+        <tbody>${list.map(p => `
+          <tr>
+            <td data-label="رقم"><b>#${p.no}</b>${p.ref ? `<div class="muted" style="font-size:12px">${esc(p.ref)}</div>` : ''}</td>
+            <td data-label="التاريخ">${fmtDate(p.date)}</td>
+            <td data-label="المورد">${esc(p.supplierName) || '<span class="muted">—</span>'}</td>
+            <td data-label="الإجمالي" class="num"><b>${money(p.total)}</b></td>
+            <td data-label="الحالة">${statusBadge(p)}</td>
+            <td class="actions"><button class="btn sm" data-view="${p.id}">عرض</button></td>
+          </tr>`).join('')}
+        </tbody>
+      </table>`;
+    $$('[data-view]', el).forEach(b => b.onclick = () => showPurchase(b.dataset.view));
+  }
+
+  function addPurchaseLine(p) {
+    const line = pur.lines.find(l => l.productId === p.id);
+    if (line) line.qty = round2(line.qty + 1);
+    else pur.lines.push({ productId: p.id, name: p.name, qty: 1, cost: p.cost || 0 });
+    pur.q = '';
+  }
+
+  function drawPurchaseEditor(view) {
+    const suppliers = [...db.suppliers].sort((a, b) => a.name.localeCompare(b.name, 'ar'));
+    view.innerHTML = `
+      <div class="toolbar">
+        <button class="btn" id="pe-back">→ رجوع</button>
+        <h3 style="margin:0" class="grow">فاتورة شراء جديدة</h3>
+      </div>
+      <div class="card">
+        <div class="form-row">
+          <div class="field"><label>المورد</label>
+            <div style="display:flex;gap:6px">
+              <select class="input" id="pe-supplier">
+                <option value="">بدون مورد</option>
+                ${suppliers.map(x => `<option value="${x.id}" ${pur.supplierId === x.id ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}
+              </select>
+              <button class="icon-btn" id="pe-new-sup" title="مورد جديد" aria-label="مورد جديد" style="height:44px;width:44px;flex-shrink:0">+</button>
+            </div>
+          </div>
+          <div class="form-row" style="gap:8px">
+            <div class="field"><label>رقم فاتورة المورد</label><input class="input" id="pe-ref" value="${esc(pur.ref)}"></div>
+            <div class="field"><label>التاريخ</label><input class="input" id="pe-date" type="date" value="${pur.date}"></div>
+          </div>
+        </div>
+      </div>
+      <div class="card">
+        <h3>الأصناف</h3>
+        <div class="toolbar" style="margin-bottom:6px">
+          <input class="input grow" id="pe-q" type="search" placeholder="🔍 ابحث عن صنف أو امسح الباركود" value="${esc(pur.q)}" autocomplete="off">
+          <button class="btn" id="pe-new-prod">+ صنف جديد</button>
+        </div>
+        <div id="pe-results"></div>
+        <div id="pe-lines"></div>
+      </div>
+      <div class="card" id="pe-summary"></div>`;
+
+    $('#pe-back', view).onclick = () => {
+      const leave = () => { pur.open = false; render(); };
+      if (pur.lines.length) confirmBox('الخروج بدون حفظ الفاتورة؟', leave, 'خروج'); else leave();
+    };
+    $('#pe-supplier', view).onchange = e => { pur.supplierId = e.target.value; };
+    $('#pe-new-sup', view).onclick = () => editSupplier(null, x => { pur.supplierId = x.id; render(); });
+    $('#pe-ref', view).oninput = e => { pur.ref = e.target.value; };
+    $('#pe-date', view).onchange = e => { pur.date = e.target.value; };
+    $('#pe-new-prod', view).onclick = () => editProduct(null, p => { addPurchaseLine(p); render(); }, true);
+    const q = $('#pe-q', view);
+    q.oninput = () => { pur.q = q.value; drawPurchaseResults(); };
+    q.onkeydown = e => {
+      if (e.key !== 'Enter') return;
+      e.preventDefault();
+      const v = q.value.trim();
+      const hit = db.products.find(p => p.barcode && p.barcode === v) || (purchaseMatches().length === 1 ? purchaseMatches()[0] : null);
+      if (hit) { addPurchaseLine(hit); q.value = ''; drawPurchaseResults(); drawPurchaseLines(); }
+      else if (v) toast('لا يوجد صنف بهذا الكود — أضفه كصنف جديد', true);
+    };
+    drawPurchaseResults();
+    drawPurchaseLines();
+  }
+
+  function purchaseMatches() {
+    const q = pur.q.trim().toLowerCase();
+    if (!q) return [];
+    return db.products.filter(p => p.trackStock !== false &&
+      (p.name.toLowerCase().includes(q) || (p.barcode || '').toLowerCase().includes(q))).slice(0, 8);
+  }
+
+  function drawPurchaseResults() {
+    const el = $('#pe-results');
+    const list = purchaseMatches();
+    el.innerHTML = list.length ? `<div class="results">${list.map(p => `
+      <button class="list-row result" data-add="${p.id}">
+        <span>${esc(p.name)} <span class="muted" style="font-size:12px">متاح ${fmt(p.stock)}</span></span>
+        <span class="num muted">تكلفة ${fmt(p.cost || 0)}</span>
+      </button>`).join('')}</div>` : (pur.q.trim() ? '<p class="muted">لا توجد نتائج</p>' : '');
+    $$('[data-add]', el).forEach(b => b.onclick = () => {
+      addPurchaseLine(byId(db.products, b.dataset.add));
+      $('#pe-q').value = '';
+      drawPurchaseResults(); drawPurchaseLines();
+    });
+  }
+
+  function drawPurchaseLines() {
+    const el = $('#pe-lines');
+    el.innerHTML = pur.lines.length ? `
+      <div class="table-wrap"><table class="table responsive">
+        <thead><tr><th>الصنف</th><th>الكمية</th><th>سعر الشراء</th><th>الإجمالي</th><th></th></tr></thead>
+        <tbody>${pur.lines.map((l, i) => `
+          <tr>
+            <td data-label="الصنف"><b>${esc(l.name)}</b></td>
+            <td data-label="الكمية"><input class="input num" style="width:90px;min-height:36px" type="number" step="any" min="0" inputmode="decimal" data-qty="${i}" value="${l.qty}"></td>
+            <td data-label="سعر الشراء"><input class="input num" style="width:100px;min-height:36px" type="number" step="any" min="0" inputmode="decimal" data-cost="${i}" value="${l.cost}"></td>
+            <td data-label="الإجمالي" class="num"><b>${fmt(l.qty * l.cost)}</b></td>
+            <td class="actions"><button class="btn sm danger" data-rm="${i}" aria-label="حذف">✕</button></td>
+          </tr>`).join('')}
+        </tbody>
+      </table></div>` : emptyState('📦', 'ابحث عن صنف وأضفه للفاتورة');
+    $$('[data-qty]', el).forEach(inp => inp.onchange = () => {
+      const q = num(inp.value);
+      if (q <= 0) pur.lines.splice(+inp.dataset.qty, 1); else pur.lines[+inp.dataset.qty].qty = q;
+      drawPurchaseLines();
+    });
+    $$('[data-cost]', el).forEach(inp => inp.onchange = () => { pur.lines[+inp.dataset.cost].cost = Math.max(0, num(inp.value)); drawPurchaseLines(); });
+    $$('[data-rm]', el).forEach(b => b.onclick = () => { pur.lines.splice(+b.dataset.rm, 1); drawPurchaseLines(); });
+    drawPurchaseSummary();
+  }
+
+  function drawPurchaseSummary() {
+    const el = $('#pe-summary');
+    const t = purchaseTotals();
+    el.innerHTML = `
+      <div class="form-row">
+        <div class="field"><label>خصم من المورد</label><input class="input" id="pe-discount" type="number" step="any" min="0" inputmode="decimal" placeholder="0" value="${esc(pur.discount)}"></div>
+        <div class="field"><label>المدفوع للمورد</label><input class="input" id="pe-paid" type="number" step="any" min="0" inputmode="decimal" placeholder="${fmt(t.total)}" value="${esc(pur.paid)}"></div>
+      </div>
+      <div class="totals num">
+        <div class="row"><span>الإجمالي</span><span>${money(t.subtotal)}</span></div>
+        ${t.discount ? `<div class="row"><span>الخصم</span><span>− ${money(t.discount)}</span></div>` : ''}
+        <div class="row grand"><span>الصافي</span><span>${money(t.total)}</span></div>
+        ${t.due > 0 ? `<div class="row" style="color:var(--danger)"><span>متبقي للمورد (آجل)</span><span>${money(t.due)}</span></div>` : ''}
+      </div>
+      <div class="field" style="margin-top:10px"><input class="input" id="pe-note" placeholder="ملاحظة (اختياري)" value="${esc(pur.note)}"></div>
+      <button class="btn primary lg block" id="pe-save" ${pur.lines.length ? '' : 'disabled'}>✔ حفظ فاتورة الشراء</button>`;
+    $('#pe-discount', el).onchange = e => { pur.discount = e.target.value; drawPurchaseSummary(); };
+    $('#pe-paid', el).onchange = e => { pur.paid = e.target.value; drawPurchaseSummary(); };
+    $('#pe-note', el).oninput = e => { pur.note = e.target.value; };
+    $('#pe-save', el).onclick = () => {
+      const t2 = purchaseTotals();
+      if (t2.due > 0 && !pur.supplierId) { toast('اختار المورد لو فيه مبلغ متبقي (آجل)', true); return; }
+      const p = savePurchase({
+        supplierId: pur.supplierId, ref: pur.ref, lines: pur.lines, discount: num(pur.discount),
+        paid: pur.paid === '' ? null : num(pur.paid), note: pur.note,
+        date: pur.date && pur.date !== todayKey() ? new Date(pur.date + 'T12:00:00').toISOString() : new Date().toISOString()
+      });
+      pur.open = false;
+      render();
+      toast(`تم حفظ فاتورة الشراء #${p.no}`);
+      showPurchase(p.id);
+    };
+  }
+
+  // Records a purchase: adds stock, updates average cost and the supplier's balance.
+  function savePurchase({ supplierId, ref, lines, discount, paid, note, date }) {
+    const subtotal = round2(lines.reduce((s, l) => s + l.cost * l.qty, 0));
+    discount = round2(Math.min(Math.max(discount || 0, 0), subtotal));
+    const total = round2(subtotal - discount);
+    paid = paid == null ? total : round2(Math.min(Math.max(paid, 0), total));
+    const supplier = supplierId ? byId(db.suppliers, supplierId) : null;
+    const ratio = subtotal ? total / subtotal : 1;
+    const purchase = {
+      id: uid(), no: db.counters.purchase++, date, ref: ref || '',
+      supplierId: supplier ? supplier.id : '', supplierName: supplier ? supplier.name : '',
+      items: lines.map(l => ({ ...l })), subtotal, discount, total, paid, note: note || '', status: 'done'
+    };
+    for (const l of purchase.items) {
+      const p = byId(db.products, l.productId);
+      if (!p || p.trackStock === false) continue;
+      const unit = l.cost * ratio;
+      const oldQty = Math.max(0, p.stock);
+      p.cost = round2((oldQty * (p.cost || 0) + l.qty * unit) / (oldQty + l.qty));
+      p.stock = round2(p.stock + l.qty);
+      logMove(p, l.qty, 'purchase', 'شراء #' + purchase.no, date);
+    }
+    if (supplier && total - paid > 0) supplier.balance = round2((supplier.balance || 0) + total - paid);
+    db.purchases.push(purchase);
+    save();
+    return purchase;
+  }
+
+  function showPurchase(id) {
+    const p = byId(db.purchases, id);
+    if (!p) return;
+    const due = round2(p.total - p.paid);
+    modal.open(`فاتورة شراء #${p.no}`, `
+      <div class="muted" style="margin-bottom:8px">${fmtDate(p.date)} ${p.supplierName ? '· ' + esc(p.supplierName) : ''} ${p.ref ? '· فاتورة المورد ' + esc(p.ref) : ''}</div>
+      <div class="table-wrap"><table class="table">
+        <thead><tr><th>الصنف</th><th>الكمية</th><th>السعر</th><th>الإجمالي</th></tr></thead>
+        <tbody>${p.items.map(it => `<tr><td>${esc(it.name)}</td><td class="num">${fmt(it.qty)}</td><td class="num">${fmt(it.cost)}</td><td class="num">${fmt(it.cost * it.qty)}</td></tr>`).join('')}</tbody>
+      </table></div>
+      <div class="totals num">
+        <div class="row"><span>الإجمالي</span><span>${money(p.subtotal)}</span></div>
+        ${p.discount ? `<div class="row"><span>الخصم</span><span>− ${money(p.discount)}</span></div>` : ''}
+        <div class="row grand"><span>الصافي</span><span>${money(p.total)}</span></div>
+        <div class="row"><span>المدفوع</span><span>${money(p.paid)}</span></div>
+        ${due > 0 ? `<div class="row" style="color:var(--danger)"><span>المتبقي للمورد</span><span>${money(due)}</span></div>` : ''}
+      </div>
+      ${p.note ? `<p class="muted">📝 ${esc(p.note)}</p>` : ''}
+      ${p.status === 'returned' ? `<p><span class="badge muted">تم الإرجاع ${p.returnedAt ? fmtDateTime(p.returnedAt) : ''}</span></p>` : ''}
+      <div class="form-actions">
+        ${p.status !== 'returned' ? '<button class="btn danger" id="pu-return">↩ مرتجع للمورد</button>' : ''}
+        <button class="btn" data-close>إغلاق</button>
+      </div>`, body => {
+      const ret = $('#pu-return', body);
+      if (ret) ret.onclick = () => confirmBox(`إرجاع فاتورة الشراء #${p.no} بالكامل للمورد؟ سيتم خصم الكميات من المخزون${due > 0 ? ' وخصم المتبقي من حساب المورد' : ''}.`, () => {
+        for (const it of p.items) {
+          const prod = byId(db.products, it.productId);
+          if (prod && prod.trackStock !== false) {
+            prod.stock = round2(prod.stock - it.qty);
+            logMove(prod, -it.qty, 'purchase_return', 'شراء #' + p.no);
+          }
+        }
+        const s = p.supplierId && byId(db.suppliers, p.supplierId);
+        if (s && due > 0) s.balance = round2((s.balance || 0) - due);
+        p.status = 'returned';
+        p.returnedAt = new Date().toISOString();
+        save(); render(); toast('تم إرجاع فاتورة الشراء');
+      }, 'إرجاع');
+    });
+  }
+
+  /* =========================================================
+   * Inventory
+   * ======================================================= */
+  const inv = { tab: 'stock', q: '', low: false, type: '' };
+
+  function renderInventory(view) {
+    const tracked = db.products.filter(p => p.trackStock !== false);
+    const atCost = tracked.reduce((s, p) => s + Math.max(0, p.stock) * (p.cost || 0), 0);
+    const atPrice = tracked.reduce((s, p) => s + Math.max(0, p.stock) * p.price, 0);
+    const out = tracked.filter(p => p.stock <= 0).length;
+    view.innerHTML = `
+      <div class="grid stats">
+        <div class="card stat"><div class="label">قيمة المخزون بالتكلفة</div><div class="value">${money(atCost)}</div></div>
+        <div class="card stat"><div class="label">قيمة المخزون بسعر البيع</div><div class="value">${money(atPrice)}</div></div>
+        <div class="card stat ok"><div class="label">الربح المتوقع</div><div class="value">${money(atPrice - atCost)}</div></div>
+        <div class="card stat danger"><div class="label">ناقص / نفد</div><div class="value">${lowStockProducts().length} / ${out}</div></div>
+      </div>
+      <div class="toolbar">
+        <div class="chips" style="margin:0">
+          <button class="chip ${inv.tab === 'stock' ? 'active' : ''}" data-tab="stock">أرصدة الأصناف</button>
+          <button class="chip ${inv.tab === 'moves' ? 'active' : ''}" data-tab="moves">حركة المخزون</button>
+        </div>
+        <span class="grow"></span>
+        <button class="btn" id="inv-count">📋 جرد</button>
+        <a class="btn primary" href="#purchases">🚚 شراء</a>
+      </div>
+      <div class="toolbar">
+        <input class="input grow" type="search" id="inv-q" placeholder="🔍 اسم الصنف أو الباركود" value="${esc(inv.q)}">
+        ${inv.tab === 'stock'
+          ? `<label class="btn"><input type="checkbox" id="inv-low" ${inv.low ? 'checked' : ''}> الناقص فقط</label>`
+          : `<select class="input" id="inv-type" style="width:auto"><option value="">كل الحركات</option>${Object.entries(moveLabels).map(([k, v]) => `<option value="${k}" ${inv.type === k ? 'selected' : ''}>${v}</option>`).join('')}</select>`}
+      </div>
+      <div class="card"><div class="table-wrap" id="inv-body"></div></div>`;
+    $$('[data-tab]', view).forEach(b => b.onclick = () => { inv.tab = b.dataset.tab; renderInventory(view); });
+    $('#inv-q', view).oninput = e => { inv.q = e.target.value; drawInventory(); };
+    const low = $('#inv-low', view); if (low) low.onchange = e => { inv.low = e.target.checked; drawInventory(); };
+    const type = $('#inv-type', view); if (type) type.onchange = e => { inv.type = e.target.value; drawInventory(); };
+    $('#inv-count', view).onclick = stockCount;
+    drawInventory();
+  }
+
+  function drawInventory() {
+    const el = $('#inv-body');
+    const q = inv.q.trim().toLowerCase();
+    if (inv.tab === 'stock') {
+      const lowIds = new Set(lowStockProducts().map(p => p.id));
+      const list = db.products
+        .filter(p => p.trackStock !== false && (!q || p.name.toLowerCase().includes(q) || (p.barcode || '').toLowerCase().includes(q)) && (!inv.low || lowIds.has(p.id)))
+        .sort((a, b) => a.stock - b.stock || a.name.localeCompare(b.name, 'ar'));
+      if (!list.length) { el.innerHTML = emptyState('🏷️', db.products.length ? 'لا توجد نتائج' : 'لا توجد أصناف بعد'); return; }
+      el.innerHTML = `
+        <table class="table responsive">
+          <thead><tr><th>الصنف</th><th>الرصيد</th><th>حد الطلب</th><th>متوسط التكلفة</th><th>القيمة</th><th></th></tr></thead>
+          <tbody>${list.map(p => `
+            <tr>
+              <td data-label="الصنف"><b>${esc(p.name)}</b>${p.category ? `<div class="muted" style="font-size:12px">${esc(p.category)}</div>` : ''}</td>
+              <td data-label="الرصيد"><span class="badge ${p.stock <= 0 ? 'danger' : lowIds.has(p.id) ? 'warn' : 'ok'}">${fmt(p.stock)}</span></td>
+              <td data-label="حد الطلب" class="num">${fmt(p.minStock || 0)}</td>
+              <td data-label="متوسط التكلفة" class="num">${fmt(p.cost || 0)}</td>
+              <td data-label="القيمة" class="num"><b>${fmt(Math.max(0, p.stock) * (p.cost || 0))}</b></td>
+              <td class="actions">
+                <button class="btn sm" data-moves="${p.id}">الحركة</button>
+                <button class="btn sm" data-stock="${p.id}">± مخزون</button>
+              </td>
+            </tr>`).join('')}
+          </tbody>
+        </table>`;
+      $$('[data-stock]', el).forEach(b => b.onclick = () => adjustStock(b.dataset.stock));
+      $$('[data-moves]', el).forEach(b => b.onclick = () => { inv.tab = 'moves'; inv.q = byId(db.products, b.dataset.moves).name; render(); });
+      return;
+    }
+    const list = db.movements
+      .filter(m => (!q || m.name.toLowerCase().includes(q) || ((byId(db.products, m.productId) || {}).barcode || '').includes(q)) && (!inv.type || m.type === inv.type))
+      .sort((a, b) => b.date.localeCompare(a.date))
+      .slice(0, 300);
+    if (!list.length) { el.innerHTML = emptyState('🔄', 'لا توجد حركات مخزون مسجلة'); return; }
+    el.innerHTML = `
+      <table class="table responsive">
+        <thead><tr><th>التاريخ</th><th>الصنف</th><th>الحركة</th><th>الكمية</th><th>الرصيد بعدها</th><th>المرجع</th></tr></thead>
+        <tbody>${list.map(m => `
+          <tr>
+            <td data-label="التاريخ">${fmtDateTime(m.date)}</td>
+            <td data-label="الصنف"><b>${esc(m.name)}</b></td>
+            <td data-label="الحركة"><span class="badge ${m.qty > 0 ? 'ok' : 'warn'}">${moveLabels[m.type] || m.type}</span></td>
+            <td data-label="الكمية" class="num" style="color:${m.qty > 0 ? 'var(--ok)' : 'var(--danger)'}"><bdi dir="ltr">${m.qty > 0 ? '+' : ''}${fmt(m.qty)}</bdi></td>
+            <td data-label="الرصيد بعدها" class="num">${fmt(m.balance)}</td>
+            <td data-label="المرجع">${esc(m.ref) || '<span class="muted">—</span>'}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table>`;
+  }
+
+  function stockCount() {
+    const list = db.products.filter(p => p.trackStock !== false).sort((a, b) => a.name.localeCompare(b.name, 'ar'));
+    if (!list.length) { toast('لا توجد أصناف للجرد', true); return; }
+    modal.open('جرد المخزون', `
+      <p class="muted" style="margin-top:0">اكتب الكمية الفعلية الموجودة على الرف. الأصناف اللي تسيبها فاضية مش هتتغير.</p>
+      <input class="input" id="cnt-q" type="search" placeholder="🔍 فلترة" style="margin-bottom:8px">
+      <form id="cnt-form">
+        <div class="count-list">${list.map(p => `
+          <label class="list-row count-row" data-name="${esc(p.name.toLowerCase())}">
+            <span>${esc(p.name)}<div class="muted" style="font-size:12px">بالنظام: ${fmt(p.stock)}</div></span>
+            <input class="input num" style="width:100px" type="number" step="any" inputmode="decimal" name="${p.id}" placeholder="${fmt(p.stock)}">
+          </label>`).join('')}
+        </div>
+        <div class="form-actions">
+          <button type="button" class="btn" data-close>إلغاء</button>
+          <button class="btn primary">حفظ الجرد</button>
+        </div>
+      </form>`, body => {
+      $('#cnt-q', body).oninput = e => {
+        const q = e.target.value.trim().toLowerCase();
+        $$('.count-row', body).forEach(r => { r.hidden = q && !r.dataset.name.includes(q); });
+      };
+      $('#cnt-form', body).onsubmit = e => {
+        e.preventDefault();
+        const d = formData(e.target);
+        let changed = 0;
+        for (const p of list) {
+          if (d[p.id] === '' || d[p.id] == null) continue;
+          const diff = round2(num(d[p.id]) - p.stock);
+          if (!diff) continue;
+          p.stock = round2(num(d[p.id]));
+          logMove(p, diff, 'count', 'جرد');
+          changed++;
+        }
+        save(); modal.close(); render();
+        toast(changed ? `تم تعديل ${changed} صنف بعد الجرد` : 'لا توجد فروقات');
       };
     });
   }
@@ -1039,7 +1647,7 @@
             <td data-label="العميل"><b>${esc(c.name)}</b></td>
             <td data-label="الموبايل">${c.phone ? `<a href="tel:${esc(c.phone)}">${esc(c.phone)}</a>` : '<span class="muted">—</span>'}</td>
             <td data-label="عدد الفواتير" class="num">${count}</td>
-            <td data-label="الرصيد المستحق">${(c.balance || 0) > 0 ? `<span class="badge danger">${money(c.balance)}</span>` : '<span class="badge ok">لا يوجد</span>'}</td>
+            <td data-label="الرصيد المستحق">${(c.balance || 0) > 0 ? `<span class="badge danger">${money(c.balance)}</span>` : (c.balance || 0) < 0 ? `<span class="badge ok">له عندنا ${money(-c.balance)}</span>` : '<span class="badge ok">لا يوجد</span>'}</td>
             <td class="actions">
               <button class="btn sm" data-statement="${c.id}">كشف حساب</button>
               ${(c.balance || 0) > 0 ? `<button class="btn sm primary" data-pay="${c.id}">تحصيل</button>` : ''}
@@ -1295,6 +1903,7 @@
         <div class="card stat danger"><div class="label">المصروفات</div><div class="value">${money(s.expenses)}</div></div>
         <div class="card stat ${signClass(s.profit)}"><div class="label">صافي الربح</div><div class="value">${money(s.profit)}</div></div>
         <div class="card stat"><div class="label">متوسط الفاتورة</div><div class="value">${money(s.count ? s.sales / s.count : 0)}</div></div>
+        <div class="card stat"><div class="label">المشتريات</div><div class="value">${money(s.purchases)}</div><div class="muted">${s.purchaseCount} فاتورة شراء</div></div>
       </div>
       <div class="card">
         <h3>المبيعات اليومية</h3>
@@ -1376,8 +1985,7 @@
           <button class="btn" id="demo">تحميل بيانات تجريبية</button>
           <button class="btn danger" id="wipe">مسح كل البيانات</button>
         </div>
-      </div>
-      <p class="credit">${CREDIT}</p>`;
+      </div>`;
 
     $('#set-form', view).onsubmit = e => {
       e.preventDefault();
@@ -1413,7 +2021,10 @@
           if (!data || !Array.isArray(data.products) || !Array.isArray(data.invoices)) throw new Error('bad');
           confirmBox('سيتم استبدال كل البيانات الحالية بالنسخة الاحتياطية. متأكد؟', () => {
             const base = defaultDB();
-            db = Object.assign(base, data, { settings: Object.assign(base.settings, data.settings || {}) });
+            db = Object.assign(base, data, {
+              settings: Object.assign(base.settings, data.settings || {}),
+              counters: Object.assign(base.counters, data.counters || {})
+            });
             save(); applyTheme(); applyBrand(); render(); toast('تم استرجاع النسخة الاحتياطية');
           }, 'استرجاع');
         } catch (err) {
@@ -1445,6 +2056,7 @@
       barcode: String(622100000000 + i), createdAt: new Date().toISOString()
     }));
     db.products.push(...newProducts);
+    newProducts.forEach(p => logMove(p, p.stock, 'opening'));
     const custs = [['أحمد محمد', '01001234567'], ['محمود علي', '01112345678'], ['سارة حسن', '01223456789']]
       .map(([name, phone]) => ({ id: uid(), name, phone, address: '', balance: 0, createdAt: new Date().toISOString() }));
     db.customers.push(...custs);
@@ -1479,6 +2091,19 @@
       { id: uid(), title: 'إيجار المحل', amount: 3000, category: 'إيجار', date: new Date(monthStartKey() + 'T12:00:00').toISOString() },
       { id: uid(), title: 'فاتورة كهرباء', amount: 450, category: 'كهرباء', date: new Date().toISOString() }
     );
+    const sups = [['شركة النيل للتوزيع', '01005556677'], ['مخازن الأمل', '01114443322']]
+      .map(([name, phone]) => ({ id: uid(), name, phone, company: '', address: '', balance: 0, createdAt: new Date().toISOString() }));
+    db.suppliers.push(...sups);
+    savePurchase({
+      supplierId: sups[0].id, ref: 'INV-1042', paid: 300, discount: 0, note: '',
+      lines: [newProducts[0], newProducts[1], newProducts[3]].map(p => ({ productId: p.id, name: p.name, qty: 24, cost: p.cost })),
+      date: new Date(Date.now() - 3 * 864e5).toISOString()
+    });
+    savePurchase({
+      supplierId: sups[1].id, ref: '', paid: null, discount: 20, note: '',
+      lines: [newProducts[6], newProducts[7]].map(p => ({ productId: p.id, name: p.name, qty: 20, cost: p.cost })),
+      date: new Date(Date.now() - 1 * 864e5).toISOString()
+    });
     save();
   }
 
