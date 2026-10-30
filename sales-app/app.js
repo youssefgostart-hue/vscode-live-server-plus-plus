@@ -20,7 +20,9 @@
       taxRate: 0,
       footer: 'شكرًا لزيارتكم',
       theme: 'auto',
-      allowNegativeStock: false
+      allowNegativeStock: false,
+      // Default login admin / admin; the password is stored as a SHA-256 hash.
+      auth: { user: 'admin', hash: '8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918' }
     },
     products: [],
     customers: [],
@@ -238,10 +240,9 @@
     const onboarding = db.products.length === 0 ? `
       <div class="card" style="margin-bottom:16px">
         <h3>👋 أهلًا بيك!</h3>
-        <p class="muted" style="margin-top:0">ابدأ بإضافة أصنافك، أو جرّب البرنامج ببيانات تجريبية.</p>
+        <p class="muted" style="margin-top:0">ابدأ بإضافة أصنافك عشان تقدر تبيع.</p>
         <div class="toolbar" style="margin:0">
           <a class="btn primary" href="#products">إضافة أصناف</a>
-          <button class="btn" id="seed-demo">تحميل بيانات تجريبية</button>
         </div>
       </div>` : '';
 
@@ -286,8 +287,6 @@
       </div>`;
 
     $$('[data-inv]', view).forEach(el => el.onclick = () => showInvoice(el.dataset.inv));
-    const seedBtn = $('#seed-demo', view);
-    if (seedBtn) seedBtn.onclick = () => { seedDemo(); render(); toast('تم تحميل البيانات التجريبية'); };
   }
 
   function statusBadge(inv) {
@@ -1980,9 +1979,24 @@
       </div>
 
       <div class="card">
+        <h3>الحساب</h3>
+        <p class="muted" style="margin-top:0">اسم المستخدم الحالي: <b>${esc(s.auth.user)}</b></p>
+        <form id="auth-form" autocomplete="off">
+          <div class="field"><label>كلمة المرور الحالية *</label><input class="input" name="current" type="password" required autocomplete="current-password"></div>
+          <div class="form-row">
+            <div class="field"><label>اسم المستخدم الجديد</label><input class="input" name="user" value="${esc(s.auth.user)}" autocapitalize="off"></div>
+            <div class="field"><label>كلمة المرور الجديدة</label><input class="input" name="pass" type="password" autocomplete="new-password" placeholder="اتركها فاضية لو مش هتغيرها"></div>
+          </div>
+          <div class="form-actions" style="justify-content:space-between">
+            <button type="button" class="btn danger" id="logout">تسجيل خروج</button>
+            <button class="btn primary">حفظ بيانات الدخول</button>
+          </div>
+        </form>
+      </div>
+
+      <div class="card">
         <h3>أخرى</h3>
         <div class="toolbar" style="margin:0">
-          <button class="btn" id="demo">تحميل بيانات تجريبية</button>
           <button class="btn danger" id="wipe">مسح كل البيانات</button>
         </div>
       </div>`;
@@ -2035,9 +2049,16 @@
       e.target.value = '';
     };
 
-    $('#demo', view).onclick = () => confirmBox('إضافة أصناف وعملاء وفواتير تجريبية للبيانات الحالية؟', () => {
-      seedDemo(); render(); toast('تم تحميل البيانات التجريبية');
-    }, 'تحميل', false);
+    $('#auth-form', view).onsubmit = async e => {
+      e.preventDefault();
+      const d = formData(e.target);
+      if (!(await checkLogin(db.settings.auth.user, d.current))) { toast('كلمة المرور الحالية غلط', true); return; }
+      if (!d.user) { toast('اكتب اسم المستخدم', true); return; }
+      if (d.pass && d.pass.length < 4) { toast('كلمة المرور لازم تكون 4 حروف أو أرقام على الأقل', true); return; }
+      db.settings.auth = { user: d.user, hash: d.pass ? await sha256(d.pass) : db.settings.auth.hash };
+      save(); render(); toast('تم حفظ بيانات الدخول');
+    };
+    $('#logout', view).onclick = logout;
 
     $('#wipe', view).onclick = () => confirmBox('<b>سيتم حذف كل البيانات نهائيًا!</b> يُفضل أخذ نسخة احتياطية أولًا.', () => {
       db = defaultDB(); save(); resetPOS(); applyTheme(); applyBrand(); location.hash = '#dashboard'; render(); toast('تم مسح البيانات');
@@ -2108,6 +2129,63 @@
   }
 
   /* =========================================================
+   * Login
+   * Everything runs in the browser, so this keeps casual users out;
+   * it is not protection against someone who can read the page code.
+   * ======================================================= */
+  const SESSION_KEY = 'salesApp.session';
+  let memorySession = false;
+
+  async function sha256(text) {
+    const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+    return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+  }
+
+  async function checkLogin(user, pass) {
+    const auth = db.settings.auth;
+    return user.trim().toLowerCase() === auth.user.toLowerCase() && (await sha256(pass)) === auth.hash;
+  }
+
+  function isLoggedIn() {
+    try { return localStorage.getItem(SESSION_KEY) === '1'; } catch (e) { return memorySession; }
+  }
+
+  function setSession(on) {
+    memorySession = on;
+    try { on ? localStorage.setItem(SESSION_KEY, '1') : localStorage.removeItem(SESSION_KEY); } catch (e) { /* in-memory only */ }
+  }
+
+  function showLogin() {
+    $('.app').hidden = true;
+    $('#login').hidden = false;
+    $('#login-store').textContent = db.settings.storeName || 'برنامج المبيعات';
+    const form = $('#login-form');
+    form.reset();
+    $('#login-error').hidden = true;
+    form.onsubmit = async e => {
+      e.preventDefault();
+      if (await checkLogin(form.user.value, form.pass.value)) {
+        setSession(true);
+        $('#login').hidden = true;
+        $('.app').hidden = false;
+        render();
+      } else {
+        $('#login-error').hidden = false;
+        form.pass.value = '';
+        form.pass.focus();
+      }
+    };
+    form.user.focus();
+  }
+
+  function logout() {
+    setSession(false);
+    modal.close();
+    $('#view').innerHTML = '';
+    showLogin();
+  }
+
+  /* =========================================================
    * Boot
    * ======================================================= */
   function applyTheme() {
@@ -2125,7 +2203,7 @@
   if (EMBED && firstVisit && !db.products.length) seedDemo();
   applyTheme();
   applyBrand();
-  render();
+  if (isLoggedIn()) render(); else showLogin();
   if (EMBED && firstVisit) toast('تم تحميل بيانات تجريبية — امسحها من الإعدادات');
 
   // Offline support when served over http(s) (service workers don't run on file://)

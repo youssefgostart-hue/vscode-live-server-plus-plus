@@ -143,6 +143,23 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .count-row { cursor: default; }
 .count-list { max-height: 55vh; overflow-y: auto; margin-bottom: 8px; }
 
+/* ---------- Login ---------- */
+.login {
+  min-height: 100vh; display: flex; align-items: center; justify-content: center;
+  padding: 24px 16px; background: var(--bg);
+}
+.login-card {
+  width: 100%; max-width: 380px; background: var(--surface); border: 1px solid var(--border);
+  border-radius: 18px; box-shadow: var(--shadow); padding: 28px 22px;
+  display: flex; flex-direction: column; align-items: stretch; gap: 4px; text-align: center;
+}
+.login-card img { align-self: center; }
+.login-card h1 { margin: 10px 0 0; font-size: 21px; }
+.login-card p { margin: 0 0 14px; }
+.login-card .field { text-align: start; }
+.login-card .credit-tag { align-self: center; margin-top: 16px; }
+.login-error { color: var(--danger); font-weight: 600; font-size: 14px; }
+
 /* ---------- More sheet ---------- */
 .sheet-backdrop {
   position: fixed; inset: 0; background: rgba(0,0,0,.4); z-index: 40;
