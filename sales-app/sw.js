@@ -1,5 +1,5 @@
 // Service worker: caches the app shell so it opens with no internet.
-const CACHE = 'sales-app-v1';
+const CACHE = 'sales-app-v2';
 const ASSETS = ['./', './index.html', './styles.css', './app.js', './manifest.webmanifest', './icon.svg'];
 
 self.addEventListener('install', e => {

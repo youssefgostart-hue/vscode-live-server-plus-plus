@@ -129,6 +129,8 @@ button, input, select, textarea { font: inherit; color: inherit; }
   .bottom-nav a.active { color: var(--primary); }
 }
 
+.credit { text-align: center; color: var(--muted); font-size: 12px; margin: 24px 0 8px; direction: ltr; }
+
 /* ---------- More sheet ---------- */
 .sheet-backdrop {
   position: fixed; inset: 0; background: rgba(0,0,0,.4); z-index: 40;
